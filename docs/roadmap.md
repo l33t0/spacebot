@@ -12,9 +12,9 @@ For each piece: reference IronClaw, OpenClaw, Nanobot, and Rig for inspiration, 
 - Project structure — all modules declared, module root pattern (`src/memory.rs` not `mod.rs`)
 - Error hierarchy — thiserror domain enums (`ConfigError`, `DbError`, `LlmError`, `MemoryError`, `AgentError`, `SecretsError`) wrapped by top-level `Error` with `#[from]`
 - Config loading — env-based with compaction/channel defaults, data dir setup
-- Database connections — SQLite (sqlx) + LanceDB + redb, migration runner wired in `db.rs`
+- Database connections — SQLite (sqlx) + LanceDB + redb. SQLite migrations for all tables (memories, associations, conversations, heartbeats). Migration runner in `db.rs`.
 - LLM — `SpacebotModel` implements Rig's `CompletionModel` trait (completion, make, stream stub). Routes through `LlmManager` via direct HTTP to Anthropic and OpenAI. Handles tool definitions in requests and tool calls in responses.
-- Memory — types (`Memory`, `Association`, `MemoryType`, `RelationType`), SQLite store (full CRUD + associations + content search), embedding generation (fastembed), hybrid search (FTS + graph traversal + RRF fusion), maintenance (decay/prune stubs)
+- Memory — types (`Memory`, `Association`, `MemoryType`, `RelationType`), SQLite store (full CRUD + associations), LanceDB embedding storage + vector search (cosine) + FTS (Tantivy), fastembed (all-MiniLM-L6-v2, 384 dims), hybrid search (vector + FTS + graph traversal + RRF fusion), `MemorySearch` bundles store + lance + embedder. Maintenance (decay/prune stubs).
 - Agent structs — Channel (278 lines, event loop with `tokio::select!`, branch/worker spawning, status block), Branch (107 lines, history clone, recall, conclusion return), Worker (155 lines, state machine with `can_transition_to`), Compactor (141 lines, tiered thresholds), Cortex (117 lines, signal processing). Core LLM calls within agents are simulated — the surrounding infrastructure is real.
 - StatusBlock — event-driven updates from `ProcessEvent`, renders to context string
 - SpacebotHook — tool start/complete events, leak detection regexes (`LazyLock`), status updates
@@ -22,78 +22,77 @@ For each piece: reference IronClaw, OpenClaw, Nanobot, and Rig for inspiration, 
 - Tools — 11 tool files. Real implementations: `memory_save`, `memory_recall`, `shell`, `file` (with path guards), `exec`, `set_status`. Stubs: `reply`, `branch_tool`, `spawn_worker`, `route`, `cancel`.
 - `ToolServerHandle` wraps Rig's `ToolSet` with `register()`, but individual tools don't implement Rig's `Tool` trait yet — they're standalone async functions.
 - Core types in `lib.rs` — `InboundMessage`, `OutboundResponse`, `StatusUpdate`, `ProcessEvent`, `AgentDeps`, `ProcessId`, `ProcessType`, `ChannelId`, `WorkerId`, `BranchId`
-- `main.rs` — CLI (clap), tracing, config/DB/LLM init, event loop, graceful shutdown
+- `main.rs` — CLI (clap), tracing, config/DB/LLM/memory init (constructs `MemorySearch` with all components), event loop, graceful shutdown
 
 **What's missing:**
-- SQLite migrations (migrations/ directory is empty — tables created inline in `memory/store.rs`)
-- LanceDB vector storage (lance.rs is a stub — no table management, no embedding insert/query)
-- Tools not registered as Rig `Tool` trait impls (no `const NAME`, no `Args`/`Output` types, no `JsonSchema`)
-- No system prompts (`prompts/` directory doesn't exist)
+- Tools not registered as Rig `Tool` trait impls (no `const NAME`, no `Args`/`Output` types, no `JsonSchema`). Current tools are standalone `async fn`s that take `AgentDeps` as a parameter — fundamentally different shape from Rig's `Tool::call(&self, args)`. Each tool will need to hold its dependencies (MemorySearch, event channels, etc.) as struct fields.
+- `SpacebotHook` has standalone methods but doesn't implement Rig's `PromptHook<SpacebotModel>` trait — not wired into the agent loop
+- `ToolServerHandle` has a broken `Clone` impl (creates empty `ToolSet`, losing all registered tools)
 - No identity files (SOUL.md, IDENTITY.md, USER.md)
-- No conversation history persistence
 - Agent LLM calls are simulated (placeholder `tokio::time::sleep` instead of real `agent.prompt()`)
 - Streaming not implemented (SpacebotModel.stream() returns error)
 - Secrets and settings stores are empty stubs
 
+**Known issues:**
+- `embedding.rs` `embed_one()` async path creates a new fastembed model per call instead of sharing via Arc (the sync `embed_one_blocking()` works correctly and is what `hybrid_search` uses)
+- Arrow version mismatch in Cargo.toml: `arrow = "54"` vs `arrow-array`/`arrow-schema` at `"57.3.0"` — should align or drop the `arrow` meta-crate
+- `lance.rs` casts `_distance`/`_score` columns as `Float64Type` — LanceDB may return `Float32`, risking a runtime panic on cast
+
 ---
 
-## Phase 1: Migrations and LanceDB
+## ~~Phase 1: Migrations and LanceDB~~ Done
 
-Move table creation out of Rust code and into proper migrations. Get vector storage working.
-
-- [ ] Write SQLite migrations: memories, associations, conversations, conversation_archives tables
-- [ ] Remove inline `CREATE TABLE` from `memory/store.rs` (use sqlx migrations only)
-- [ ] Implement `memory/lance.rs` — table creation, embedding insert, vector search (HNSW)
-- [ ] Wire embedding generation into memory save flow (generate on create, store in LanceDB)
-- [ ] Connect vector results into hybrid search (currently FTS + graph only, no vector)
-- [ ] Test: save a memory, search by semantic similarity
-
-**Reference:** IronClaw's pgvector HNSW config (`m=16, ef_construction=64`) for index parameters. The search module already has RRF — it just needs real vector results to fuse.
+- [x] SQLite migrations for all tables (memories, associations, conversations, heartbeats)
+- [x] Inline DDL removed from `memory/store.rs`, `conversation/history.rs`, `heartbeat/store.rs`
+- [x] `memory/lance.rs` — LanceDB table with Arrow schema, embedding insert, vector search (cosine), FTS (Tantivy), index creation
+- [x] Embedding generation wired into memory save flow (`memory_save.rs` generates + stores)
+- [x] Vector + FTS results connected into hybrid search via `MemorySearch` struct
+- [x] `MemorySearch` bundles `MemoryStore` + `EmbeddingTable` + `EmbeddingModel`, replaces `memory_store` in `AgentDeps`
 
 ---
 
 ## Phase 2: Wire Tools to Rig
 
-Individual tools need to implement Rig's `Tool` trait so they work with `AgentBuilder.tool()` and the agentic loop.
+Individual tools need to implement Rig's `Tool` trait so they work with `AgentBuilder.tool()` and the agentic loop. The current tools are standalone `async fn`s that take `AgentDeps` — they need to become structs that hold their dependencies and implement `Tool::call(&self, args)`.
 
-- [ ] Implement tools as Rig `Tool` trait impls (`const NAME`, `Args: Deserialize + JsonSchema`, `Output: Serialize`, `definition()`, `call()`)
+- [ ] Reshape tools as structs with dependency fields (e.g., `MemorySaveTool { memory_search: Arc<MemorySearch>, event_tx: mpsc::Sender<ProcessEvent> }`)
+- [ ] Implement Rig's `Tool` trait on each struct (`const NAME`, `Args: Deserialize + JsonSchema`, `Output: Serialize`, `definition()`, `call()`)
 - [ ] Create shared ToolServer for channel/branch tools (reply, branch, spawn_worker, memory_save, route, cancel)
 - [ ] Create per-worker ToolServer factory for task tools (shell, file, exec, set_status)
-- [ ] Replace current `ToolServerHandle` wrapper — use Rig's `ToolServer::run()` → `ToolServerHandle` directly, or wrap it properly (current Clone impl loses all tools)
-- [ ] Update AgentDeps to hold a real `rig::tool::server::ToolServerHandle`
+- [ ] Delete the custom `ToolServerHandle` wrapper — use Rig's `ToolServer::run()` → `ToolServerHandle` directly (channel-based, Clone works correctly)
+- [ ] Update `AgentDeps` to hold a real `rig::tool::server::ToolServerHandle`
+- [ ] Implement `PromptHook<SpacebotModel>` on `SpacebotHook` — wire the existing standalone methods into Rig's trait (on_tool_call, on_tool_result, on_completion_response, etc.)
+- [ ] Implement `PromptHook<SpacebotModel>` on `CortexHook`
 
-**Reference:** Rig's `Tool` trait: `const NAME`, `type Args`, `type Output`, `fn definition()`, `fn call()`. Doc comments on input structs serve as LLM instructions. `ToolServer::run()` consumes the server and returns a handle (channel-based, Clone is free).
-
----
-
-## Phase 3: System Prompts and Identity
-
-Create the prompt files and identity loading that give agents their behavior.
-
-- [ ] Create `prompts/` directory
-- [ ] Write `prompts/channel.md` — personality, delegation instructions, tool usage guide
-- [ ] Write `prompts/branch.md` — thinking instructions, memory recall guidance
-- [ ] Write `prompts/worker.md` — task execution instructions, status reporting
-- [ ] Write `prompts/compactor.md` — summarization and memory extraction instructions
-- [ ] Implement `identity/files.rs` — load SOUL.md, IDENTITY.md, USER.md from config dir
-- [ ] Build context assembly in `conversation/context.rs` — combine prompt + identity + memories + status block
-
-**Reference:** OpenClaw's skills-as-prompt-injections for channel prompt structure. Nanobot's context building (~236 lines) as a simplicity target. Identity files are raw text injected into system prompts, not parsed.
+**Reference:** Rig's `Tool` trait: `const NAME`, `type Args`, `type Output`, `fn definition()`, `fn call()`. Doc comments on input structs serve as LLM instructions. `ToolServer::run()` consumes the server and returns a handle (channel-based, Clone is free). See `docs/research/rig-integration.md` for full `PromptHook` method signatures and `ToolCallHookAction` variants.
 
 ---
 
-## Phase 4: The Channel (MVP Core)
+## ~~Phase 3: System Prompts and Identity~~ Done
 
-The user-facing agent. Replace simulated logic with real Rig agent calls.
+- [x] `prompts/` directory with all 5 prompt files (CHANNEL.md, BRANCH.md, WORKER.md, COMPACTOR.md, CORTEX.md)
+- [x] `identity/files.rs` — `Prompts` struct, `load_all_prompts()`, per-type loaders
+- [x] `conversation/context.rs` — `build_channel_context()` (prompt + status + identity memories + high-importance memories), `build_branch_context()`, `build_worker_context()`
+- [x] `conversation/history.rs` — `HistoryStore` with save_turn, load_recent, compaction summaries
 
-- [ ] Wire `AgentBuilder::new(model).preamble(&prompt).tool_server_handle(tools).default_max_turns(5).build()`
+---
+
+## Phase 4: Model Routing + The Channel (MVP Core)
+
+Implement model routing so each process type uses the right model, then wire the channel as the first real agent.
+
+- [ ] Implement `RoutingConfig` — process-type defaults, task-type overrides, fallback chains (see `docs/routing.md`)
+- [ ] Add `resolve_for_process(process_type, task_type)` to `LlmManager`
+- [ ] Implement fallback logic in `SpacebotModel` — retry with next model in chain on 429/502/503/504
+- [ ] Rate limit tracking — deprioritize 429'd models for configurable cooldown
+- [ ] Wire `AgentBuilder::new(model).preamble(&prompt).hook(spacebot_hook).tool_server_handle(tools).default_max_turns(5).build()`
 - [ ] Replace placeholder message handling with `agent.prompt(&message).with_history(&mut history).max_turns(5).await`
 - [ ] Wire status block injection — prepend rendered status to each prompt call
-- [ ] Implement conversation history persistence (`conversation/history.rs`) — save/load from SQLite
+- [ ] Connect conversation history persistence (HistoryStore already implemented) to channel message flow
 - [ ] Fire-and-forget DB writes for message persistence (`tokio::spawn`, don't block the response)
 - [ ] Test: send a message to a channel, get a real LLM response back
 
-**Reference:** Rig's `agent.prompt().with_history(&mut history).max_turns(5)` is the core call. The channel never blocks on branches, workers, or compaction.
+**Reference:** `docs/routing.md` for the full routing design. Rig's `agent.prompt().with_history(&mut history).max_turns(5)` is the core call. The channel never blocks on branches, workers, or compaction.
 
 ---
 
@@ -104,7 +103,7 @@ Replace simulated branch/worker execution with real agent calls.
 - [ ] Branch: wire `agent.prompt(&task).with_history(&mut branch_history).max_turns(10).await`
 - [ ] Branch result injection — insert conclusion into channel history as a distinct message
 - [ ] Branch concurrency limit enforcement (already scaffolded, needs testing)
-- [ ] Worker: wire `agent.prompt(&task).max_turns(50).await` with task-specific tools
+- [ ] Worker: resolve model via `resolve_for_process(Worker, Some(task_type))`, wire `agent.prompt(&task).max_turns(50).await` with task-specific tools
 - [ ] Interactive worker follow-ups — repeated `.prompt()` calls with accumulated history
 - [ ] Worker status reporting via set_status tool → StatusBlock updates
 - [ ] Handle stale branch results and worker timeout via Rig's `MaxTurnsError` / `PromptCancelled`

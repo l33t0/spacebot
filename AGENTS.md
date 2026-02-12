@@ -110,8 +110,9 @@ src/
 ├── error.rs            — top-level Error enum wrapping domain errors
 │
 ├── llm.rs              → llm/
-│   ├── manager.rs      — LlmManager: provider routing by model name
+│   ├── manager.rs      — LlmManager: provider routing, model resolution, fallback chains
 │   ├── model.rs        — SpacebotModel: CompletionModel impl
+│   ├── routing.rs      — RoutingConfig: process-type defaults, task-type overrides, fallbacks
 │   └── providers.rs    — provider client init (Anthropic, OpenAI, etc.)
 │
 ├── agent.rs            → agent/
@@ -359,3 +360,4 @@ These are validated patterns from research (see `docs/research/pattern-analysis.
 - `docs/research/repo-structure.md` — module layout rationale
 - `docs/research/pattern-analysis.md` — patterns to adopt/adapt/skip
 - `docs/messaging.md` — messaging system design (Discord, Telegram, webhook)
+- `docs/routing.md` — model routing design (process-type defaults, task-type overrides, fallbacks)

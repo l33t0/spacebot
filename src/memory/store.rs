@@ -11,6 +11,14 @@ pub struct MemoryStore {
     pool: SqlitePool,
 }
 
+impl std::fmt::Debug for MemoryStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryStore")
+            .field("pool", &"<SqlitePool>")
+            .finish()
+    }
+}
+
 impl MemoryStore {
     /// Create a new memory store with the given SQLite pool.
     pub fn new(pool: SqlitePool) -> Arc<Self> {

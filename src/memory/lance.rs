@@ -16,6 +16,14 @@ pub struct EmbeddingTable {
     table: lancedb::Table,
 }
 
+impl Clone for EmbeddingTable {
+    fn clone(&self) -> Self {
+        Self {
+            table: self.table.clone(),
+        }
+    }
+}
+
 impl EmbeddingTable {
     /// Open existing table or create a new one.
     pub async fn open_or_create(connection: &lancedb::Connection) -> Result<Self> {

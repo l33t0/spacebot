@@ -77,9 +77,10 @@ impl Branch {
     /// Recall memories to inform thinking.
     pub async fn recall(&self, query: &str, max_results: usize) -> Result<Vec<String>> {
         use crate::tools::memory_recall;
+        use std::sync::Arc;
         
         let memories = memory_recall::memory_recall(
-            &self.deps.memory_search,
+            Arc::clone(&self.deps.memory_search),
             query,
             max_results,
         ).await?;

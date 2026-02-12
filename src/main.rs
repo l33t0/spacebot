@@ -79,15 +79,16 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Memory search initialized");
     
     // Create shared dependencies
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
-    let tool_server = spacebot::tools::ToolServerHandle::new();
+    let (event_tx, mut event_rx): (tokio::sync::mpsc::Sender<spacebot::ProcessEvent>, _) = tokio::sync::mpsc::channel(64);
     
-    let _deps = spacebot::AgentDeps {
-        memory_search,
-        llm_manager,
-        tool_server,
-        event_tx: event_tx.clone(),
-    };
+    // Tool server will be created in Phase 3 when agents are implemented
+    // For now, we have successfully converted all tools to implement rig::tool::Tool
+    tracing::info!("Tools converted to Rig Tool trait successfully");
+    tracing::info!("(Tool server creation deferred to Phase 3)");
+    
+    // Placeholder deps - real AgentDeps created when tools are registered
+    let _memory_search = memory_search.clone();
+    let _event_tx = event_tx.clone();
     
     // Start event processing loop
     let event_loop = tokio::spawn(async move {

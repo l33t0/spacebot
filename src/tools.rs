@@ -12,43 +12,14 @@ pub mod shell;
 pub mod file;
 pub mod exec;
 
-use rig::tool::{Tool as RigTool, ToolSet};
-
-/// Tool server handle for sharing tools across agents.
-/// Wraps Rig's ToolSet.
-pub struct ToolServerHandle {
-    tool_set: ToolSet,
-}
-
-impl ToolServerHandle {
-    /// Create a new tool server handle.
-    pub fn new() -> Self {
-        Self {
-            tool_set: ToolSet::default(),
-        }
-    }
-    
-    /// Register a Rig-compatible tool.
-    pub fn register(&mut self, tool: impl RigTool + 'static) {
-        self.tool_set.add_tool(tool);
-    }
-    
-    /// Get the inner Rig ToolSet.
-    pub fn tool_set(&self) -> &ToolSet {
-        &self.tool_set
-    }
-}
-
-impl Default for ToolServerHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Clone for ToolServerHandle {
-    fn clone(&self) -> Self {
-        // ToolSet doesn't implement Clone, so we create a new empty one
-        // Tools should be registered after cloning
-        Self::new()
-    }
-}
+pub use reply::{ReplyTool, ReplyArgs, ReplyOutput, ReplyError};
+pub use branch_tool::{BranchTool, BranchArgs, BranchOutput, BranchError};
+pub use spawn_worker::{SpawnWorkerTool, SpawnWorkerArgs, SpawnWorkerOutput, SpawnWorkerError};
+pub use route::{RouteTool, RouteArgs, RouteOutput, RouteError};
+pub use cancel::{CancelTool, CancelArgs, CancelOutput, CancelError};
+pub use memory_save::{MemorySaveTool, MemorySaveArgs, MemorySaveOutput, MemorySaveError, AssociationInput};
+pub use memory_recall::{MemoryRecallTool, MemoryRecallArgs, MemoryRecallOutput, MemoryRecallError, MemoryOutput};
+pub use set_status::{SetStatusTool, SetStatusArgs, SetStatusOutput, SetStatusError};
+pub use shell::{ShellTool, ShellArgs, ShellOutput, ShellError, ShellResult};
+pub use file::{FileTool, FileArgs, FileOutput, FileError, FileEntryOutput, FileEntry, FileType};
+pub use exec::{ExecTool, ExecArgs, ExecOutput, ExecError, ExecResult, EnvVar};

@@ -119,7 +119,7 @@ pub enum ProcessEvent {
 pub struct AgentDeps {
     pub memory_search: Arc<memory::MemorySearch>,
     pub llm_manager: Arc<llm::LlmManager>,
-    pub tool_server: tools::ToolServerHandle,
+    pub tool_server: rig::tool::server::ToolServerHandle,
     pub event_tx: tokio::sync::mpsc::Sender<ProcessEvent>,
 }
 

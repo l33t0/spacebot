@@ -13,6 +13,24 @@ pub struct MemorySearch {
     embedding_model: Arc<EmbeddingModel>,
 }
 
+impl Clone for MemorySearch {
+    fn clone(&self) -> Self {
+        Self {
+            store: Arc::clone(&self.store),
+            embedding_table: self.embedding_table.clone(),
+            embedding_model: Arc::clone(&self.embedding_model),
+        }
+    }
+}
+
+impl std::fmt::Debug for MemorySearch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemorySearch")
+            .field("store", &self.store)
+            .finish_non_exhaustive()
+    }
+}
+
 impl MemorySearch {
     /// Create a new MemorySearch instance.
     pub fn new(

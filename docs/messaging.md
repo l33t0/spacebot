@@ -352,34 +352,187 @@ The webhook adapter does NOT include:
 
 If Spacebot ever gets a web UI, that would be its own subsystem -- not part of the messaging layer.
 
-## Platform-Specific Notes
+## Discord Adapter
 
-### Discord
+Uses **serenity** (`0.12.x`) — the standard Rust Discord library. Tokio-native, handles the gateway WebSocket, sharding, and caching. We use it for the gateway connection and HTTP API, not the command framework.
 
-- Uses serenity or twilight as the Rust Discord library
-- Gateway connection for real-time events (messages, reactions, etc)
-- Bot needs `MESSAGE_CONTENT` intent for reading message text
-- Thread support: messages in threads produce a `conversation_id` scoped to the thread, not the parent channel
-- Status: send typing indicator on `StatusUpdate::Thinking`, stop on response
-- Streaming: edit message in-place with coalesced chunks
+### How It Maps to Spacebot
 
-### Telegram
+Serenity provides an `EventHandler` trait. We implement `message()` to receive messages and map them to `InboundMessage`. The adapter holds an `mpsc::Sender` that feeds the `InboundStream` consumed by the `MessagingManager`.
 
-- Uses teloxide or grammers as the Rust Telegram library
-- Long polling or webhook mode for receiving updates
-- Bot API for sending/editing messages
-- Group support: bot must be mentioned or replied to in groups (configurable)
-- Status: `sendChatAction("typing")` on `StatusUpdate::Thinking`
-- Streaming: edit message in-place via `editMessageText`, coalesce to ~1s intervals
+```rust
+struct Handler {
+    inbound_tx: mpsc::Sender<InboundMessage>,
+}
 
-### Webhook
+#[async_trait]
+impl EventHandler for Handler {
+    async fn message(&self, ctx: SerenityContext, msg: SerenityMessage) {
+        // Ignore bot messages (including our own)
+        if msg.author.bot { return; }
 
-- Axum HTTP server bound to configurable address/port
-- `POST /webhook` -- accepts JSON messages, produces `InboundMessage`
+        let inbound = InboundMessage {
+            id: msg.id.to_string(),
+            source: "discord".into(),
+            conversation_id: build_conversation_id(&msg),
+            sender_id: msg.author.id.to_string(),
+            content: extract_content(&msg),
+            timestamp: *msg.timestamp,
+            metadata: build_metadata(&msg),
+        };
+
+        self.inbound_tx.send(inbound).await.ok();
+    }
+}
+```
+
+### Conversation ID Mapping
+
+Discord has guilds (servers), channels, threads, and DMs. Each maps to a Spacebot conversation:
+
+| Discord Context | conversation_id | Spacebot Channel |
+|----------------|----------------|-----------------|
+| Server channel | `discord:<guild_id>:<channel_id>` | One channel per Discord channel |
+| Thread | `discord:<guild_id>:<thread_id>` | One channel per thread |
+| DM | `discord:dm:<user_id>` | One channel per DM |
+
+Threads are the natural fit — one Discord thread = one Spacebot conversation with its own history. In server channels without threads, the bot treats the whole channel as one conversation (which might get noisy in active channels, but that's configurable).
+
+### Metadata
+
+Platform-specific data stored in `InboundMessage.metadata` for response routing:
+
+```rust
+fn build_metadata(msg: &SerenityMessage) -> HashMap<String, Value> {
+    let mut meta = HashMap::new();
+    meta.insert("discord_channel_id", msg.channel_id.into());
+    meta.insert("discord_message_id", msg.id.into());
+    meta.insert("discord_guild_id", msg.guild_id.map(|g| g.into()));
+    meta.insert("discord_author_name", msg.author.name.clone().into());
+    meta
+}
+```
+
+When responding, the adapter reads `discord_channel_id` from the original message's metadata to know where to send the reply.
+
+### Responding
+
+Responses route through serenity's HTTP client. The adapter holds an `Arc<Http>` (from serenity's context) for sending messages outside of event handlers.
+
+```rust
+async fn respond(&self, message: &InboundMessage, response: OutboundResponse) -> Result<()> {
+    let channel_id = ChannelId::from(message.metadata["discord_channel_id"]);
+
+    match response {
+        OutboundResponse::Text(text) => {
+            // Split into 2000-char chunks if needed
+            for chunk in split_message(&text, 2000) {
+                channel_id.say(&self.http, chunk).await?;
+            }
+        }
+        OutboundResponse::StreamStart => {
+            // Send placeholder message, store its ID for editing
+            let msg = channel_id.say(&self.http, "...").await?;
+            self.store_active_message(message, msg.id).await;
+        }
+        OutboundResponse::StreamChunk(text) => {
+            // Edit the active message with accumulated text
+            // (coalescer handles batching, this receives already-coalesced text)
+            if let Some(msg_id) = self.get_active_message(message).await {
+                channel_id.edit_message(&self.http, msg_id, |m| m.content(&text)).await?;
+            }
+        }
+        OutboundResponse::StreamEnd => {
+            self.clear_active_message(message).await;
+        }
+    }
+    Ok(())
+}
+```
+
+### Message Length Limits
+
+Discord caps messages at 2000 characters. The adapter splits long responses into multiple messages. For streaming, if the accumulated text exceeds 2000 chars, send a new message and continue editing that one.
+
+### Typing Indicators
+
+Discord's typing indicator lasts ~10 seconds. On `StatusUpdate::Thinking`, start a background task that calls `channel_id.broadcast_typing()` every 8 seconds. Cancel it when a response is sent or a non-Thinking status arrives.
+
+```rust
+async fn send_status(&self, message: &InboundMessage, status: StatusUpdate) -> Result<()> {
+    match status {
+        StatusUpdate::Thinking => {
+            let channel_id = ChannelId::from(message.metadata["discord_channel_id"]);
+            let http = self.http.clone();
+            self.start_typing_loop(channel_id, http).await;
+        }
+        _ => {
+            self.stop_typing_loop(message).await;
+        }
+    }
+    Ok(())
+}
+```
+
+### Bot Permissions and Intents
+
+Required Discord bot setup:
+- **Intents:** `GUILD_MESSAGES`, `DIRECT_MESSAGES`, `MESSAGE_CONTENT` (privileged — must be enabled in the Discord developer portal)
+- **Permissions:** Send Messages, Read Message History, Embed Links, Attach Files (for future media support)
+
+The adapter validates intents on startup and logs a warning if `MESSAGE_CONTENT` is missing (messages will arrive but with empty content).
+
+### Guild Filtering
+
+The adapter accepts an optional list of guild IDs. If configured, it ignores messages from guilds not in the list. If not configured, it responds to all guilds the bot is in.
+
+### DiscordAdapter Struct
+
+```rust
+pub struct DiscordAdapter {
+    token: DecryptedSecret,
+    guild_filter: Option<Vec<GuildId>>,
+    http: Arc<RwLock<Option<Arc<Http>>>>,
+    active_messages: Arc<RwLock<HashMap<String, MessageId>>>,
+    typing_tasks: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
+}
+```
+
+The `http` handle is `None` until `start()` is called. Serenity's `Client::start()` is blocking (takes over the runtime), so we spawn it in a background task and extract the HTTP client from the `ready()` event.
+
+### Initialization Flow
+
+```
+1. DiscordAdapter::new(token, guild_filter)
+2. adapter.start() called by MessagingManager
+3. Build serenity Client with our EventHandler
+4. Spawn client.start() in tokio task
+5. EventHandler.ready() fires → store Http handle
+6. EventHandler.message() fires → map to InboundMessage → send on mpsc channel
+7. Return the mpsc receiver as InboundStream
+```
+
+### Thread Auto-Creation
+
+An optional mode where the bot automatically creates a thread for each new conversation in a server channel. This gives every interaction its own isolated context. The bot replies in the thread, and the thread's ID becomes the `conversation_id`. This avoids the problem of one noisy server channel becoming one massive Spacebot conversation.
+
+This is configurable per-guild. Some channels might want threaded mode (support, general chat), others might want single-channel mode (a dedicated bot channel).
+
+## Telegram Adapter
+
+Future implementation. Will use **teloxide** for the Telegram Bot API. Long polling mode for receiving updates, Telegram Bot API for sending/editing messages. Key differences from Discord: `sendChatAction("typing")` for typing indicators (expires after ~5s, repeat every 4s), `editMessageText` for streaming (rate-limited to ~1s intervals), bot must be mentioned in groups.
+
+## Webhook Adapter
+
+The simplest adapter. An HTTP server (axum or similar) bound to a configurable address/port.
+
+- `POST /webhook` — accepts JSON messages, produces `InboundMessage`
 - Optional shared secret auth via `X-Webhook-Secret` header
 - Optional sync mode (`"wait": true`) blocks until agent responds
 - Localhost-only by default
 - No streaming, no persistent connections, no UI
+
+This is for programmatic access — CI hooks, monitoring alerts, external scripts, `curl` during development.
 
 ## Adding a New Adapter
 

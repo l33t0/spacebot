@@ -1,7 +1,8 @@
 //! SpacebotHook: Prompt hook for channels, branches, and workers.
 
-use crate::error::Result;
 use crate::{ProcessEvent, ProcessId, ProcessType};
+use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
+use rig::completion::{CompletionModel, CompletionResponse, Message};
 use tokio::sync::mpsc;
 
 /// Hook for observing agent behavior and sending events.
@@ -10,17 +11,6 @@ pub struct SpacebotHook {
     process_id: ProcessId,
     process_type: ProcessType,
     event_tx: mpsc::Sender<ProcessEvent>,
-}
-
-/// Actions the hook can take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HookAction {
-    /// Continue processing normally.
-    Continue,
-    /// Skip this turn (for rate limiting, etc.).
-    Skip,
-    /// Terminate the process (for cancellation, budget exceeded, etc.).
-    Terminate,
 }
 
 impl SpacebotHook {
@@ -35,46 +25,6 @@ impl SpacebotHook {
             process_type,
             event_tx,
         }
-    }
-
-    /// Called when a tool is about to be called.
-    pub fn on_tool_call(&self, tool_name: &str) -> HookAction {
-        // Send event without blocking
-        let event = ProcessEvent::ToolStarted {
-            process_id: self.process_id.clone(),
-            tool_name: tool_name.to_string(),
-        };
-        let _ = self.event_tx.try_send(event);
-
-        HookAction::Continue
-    }
-
-    /// Called when a tool completes.
-    pub fn on_tool_result(&self, tool_name: &str, result: &str) -> HookAction {
-        // Scan for potential leaks in tool output
-        if let Some(leak) = self.scan_for_leaks(result) {
-            tracing::warn!(%leak, "potential secret leak detected in tool output");
-            // Return the result but log the warning
-        }
-
-        let event = ProcessEvent::ToolCompleted {
-            process_id: self.process_id.clone(),
-            tool_name: tool_name.to_string(),
-            result: result.to_string(),
-        };
-        let _ = self.event_tx.try_send(event);
-
-        HookAction::Continue
-    }
-
-    /// Called on each completion response.
-    pub fn on_completion_response(&self, iteration: usize, content: &str) -> HookAction {
-        // Tool nudging: if first 2 iterations have no tool calls, prompt to use tools
-        if iteration < 2 && !content.contains("tool") {
-            tracing::debug!("response without tool calls detected, nudging");
-        }
-
-        HookAction::Continue
     }
 
     /// Send a status update event.
@@ -107,5 +57,100 @@ impl SpacebotHook {
         }
 
         None
+    }
+}
+
+impl<M> PromptHook<M> for SpacebotHook
+where
+    M: CompletionModel,
+{
+    async fn on_completion_call(
+        &self,
+        _prompt: &Message,
+        _history: &[Message],
+    ) -> HookAction {
+        // Log the completion call but don't block it
+        tracing::debug!(
+            process_id = %self.process_id,
+            process_type = %self.process_type,
+            "completion call started"
+        );
+
+        HookAction::Continue
+    }
+
+    async fn on_completion_response(
+        &self,
+        _prompt: &Message,
+        response: &CompletionResponse<M::Response>,
+    ) -> HookAction {
+        // Tool nudging: check if response has tool calls
+        // Note: Rig's CompletionResponse structure varies by model implementation
+        // We'll do basic observation here
+
+        tracing::debug!(
+            process_id = %self.process_id,
+            "completion response received"
+        );
+
+        HookAction::Continue
+    }
+
+    async fn on_tool_call(
+        &self,
+        tool_name: &str,
+        _tool_call_id: Option<String>,
+        _internal_call_id: &str,
+        _args: &str,
+    ) -> ToolCallHookAction {
+        // Send event without blocking
+        let event = ProcessEvent::ToolStarted {
+            process_id: self.process_id.clone(),
+            tool_name: tool_name.to_string(),
+        };
+        let _ = self.event_tx.try_send(event);
+
+        tracing::debug!(
+            process_id = %self.process_id,
+            tool_name = %tool_name,
+            "tool call started"
+        );
+
+        ToolCallHookAction::Continue
+    }
+
+    async fn on_tool_result(
+        &self,
+        tool_name: &str,
+        _tool_call_id: Option<String>,
+        _internal_call_id: &str,
+        _args: &str,
+        result: &str,
+    ) -> HookAction {
+        // Scan for potential leaks in tool output
+        if let Some(leak) = self.scan_for_leaks(result) {
+            tracing::warn!(
+                process_id = %self.process_id,
+                tool_name = %tool_name,
+                leak = %leak,
+                "potential secret leak detected in tool output"
+            );
+            // Return the result but log the warning
+        }
+
+        let event = ProcessEvent::ToolCompleted {
+            process_id: self.process_id.clone(),
+            tool_name: tool_name.to_string(),
+            result: result.to_string(),
+        };
+        let _ = self.event_tx.try_send(event);
+
+        tracing::debug!(
+            process_id = %self.process_id,
+            tool_name = %tool_name,
+            "tool call completed"
+        );
+
+        HookAction::Continue
     }
 }
