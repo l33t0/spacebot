@@ -1,13 +1,14 @@
 //! Memory save tool for channels and branches.
 
 use crate::error::Result;
-use crate::memory::{Memory, MemoryStore, MemoryType};
-use crate::memory::types::{CreateMemoryInput, CreateAssociationInput, RelationType};
+use crate::memory::{Memory, MemorySearch, MemoryType};
+use crate::memory::types::{CreateMemoryInput, Association, RelationType};
 use std::sync::Arc;
 
 /// Save a memory to the store.
+/// Generates and stores an embedding after saving to SQLite.
 pub async fn memory_save(
-    memory_store: &MemoryStore,
+    memory_search: &MemorySearch,
     input: CreateMemoryInput,
 ) -> Result<String> {
     // Create the memory
@@ -25,31 +26,38 @@ pub async fn memory_save(
         memory = memory.with_channel_id(channel_id);
     }
     
-    // Save to database
-    memory_store.save(&memory).await?;
+    // Save to SQLite database
+    let store = memory_search.store();
+    store.save(&memory).await?;
     
     // Create associations
     for assoc_input in input.associations {
-        let association = crate::memory::types::Association::new(
+        let association = Association::new(
             &memory.id,
             &assoc_input.target_id,
             assoc_input.relation_type,
         ).with_weight(assoc_input.weight);
         
-        memory_store.create_association(&association).await?;
+        store.create_association(&association).await?;
     }
     
-    // Store embedding if provided
-    if let Some(_embedding) = input.embedding {
-        // TODO: Store in LanceDB when table is ready
-    }
+    // Store embedding in LanceDB
+    let embedding = if let Some(embedding) = input.embedding {
+        // Use provided embedding
+        embedding
+    } else {
+        // Generate embedding using the shared model
+        memory_search.embedding_model().embed_one_blocking(&input.content)?
+    };
+    
+    memory_search.embedding_table().store(&memory.id, &input.content, &embedding).await?;
     
     Ok(memory.id)
 }
 
 /// Convenience function for simple fact saving.
 pub async fn save_fact(
-    memory_store: &MemoryStore,
+    memory_search: &MemorySearch,
     content: impl Into<String>,
     channel_id: Option<crate::ChannelId>,
 ) -> Result<String> {
@@ -63,5 +71,5 @@ pub async fn save_fact(
         associations: vec![],
     };
     
-    memory_save(memory_store, input).await
+    memory_save(memory_search, input).await
 }

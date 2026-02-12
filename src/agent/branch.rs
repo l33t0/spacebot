@@ -79,7 +79,7 @@ impl Branch {
         use crate::tools::memory_recall;
         
         let memories = memory_recall::memory_recall(
-            &self.deps.memory_store,
+            &self.deps.memory_search,
             query,
             max_results,
         ).await?;

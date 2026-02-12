@@ -1,13 +1,13 @@
 //! Memory recall tool for branches.
 
 use crate::error::Result;
-use crate::memory::{MemoryStore};
-use crate::memory::search::{hybrid_search, SearchConfig, curate_results};
+use crate::memory::{MemorySearch};
+use crate::memory::search::{SearchConfig, curate_results};
 use crate::memory::types::{Memory, MemorySearchResult};
 
 /// Recall memories using hybrid search.
 pub async fn memory_recall(
-    memory_store: &MemoryStore,
+    memory_search: &MemorySearch,
     query: &str,
     max_results: usize,
 ) -> Result<Vec<Memory>> {
@@ -17,14 +17,15 @@ pub async fn memory_recall(
         ..Default::default()
     };
     
-    let search_results = hybrid_search(memory_store, query, &config).await?;
+    let search_results = memory_search.hybrid_search(query, &config).await?;
     
     // Curate results to get the most relevant
     let curated = curate_results(&search_results, max_results);
     
     // Record access for found memories
+    let store = memory_search.store();
     for memory in &curated {
-        let _ = memory_store.record_access(&memory.id).await;
+        let _ = store.record_access(&memory.id).await;
     }
     
     Ok(curated.into_iter().cloned().collect())

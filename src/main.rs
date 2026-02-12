@@ -62,17 +62,28 @@ async fn main() -> anyhow::Result<()> {
     
     tracing::info!("LLM manager initialized");
     
-    // Initialize memory store
+    // Initialize memory components
     let memory_store = spacebot::memory::MemoryStore::new(db.sqlite.clone());
+    let embedding_table = spacebot::memory::EmbeddingTable::open_or_create(&db.lance)
+        .await
+        .context("failed to initialize LanceDB embedding table")?;
+    let embedding_model = Arc::new(spacebot::memory::EmbeddingModel::new()
+        .context("failed to initialize embedding model")?);
     
-    tracing::info!("Memory store initialized");
+    let memory_search = Arc::new(spacebot::memory::MemorySearch::new(
+        memory_store,
+        embedding_table,
+        embedding_model,
+    ));
+    
+    tracing::info!("Memory search initialized");
     
     // Create shared dependencies
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
     let tool_server = spacebot::tools::ToolServerHandle::new();
     
     let _deps = spacebot::AgentDeps {
-        memory_store,
+        memory_search,
         llm_manager,
         tool_server,
         event_tx: event_tx.clone(),

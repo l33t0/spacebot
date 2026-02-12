@@ -22,69 +22,6 @@ impl MemoryStore {
         &self.pool
     }
     
-    /// Create the memory tables if they don't exist.
-    pub async fn initialize(&self) -> Result<()> {
-        // Memories table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                memory_type TEXT NOT NULL,
-                importance REAL NOT NULL DEFAULT 0.5,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_accessed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                access_count INTEGER NOT NULL DEFAULT 0,
-                source TEXT,
-                channel_id TEXT
-            )
-            "#
-        )
-        .execute(&self.pool)
-        .await
-        .with_context(|| "failed to create memories table")?;
-        
-        // Associations table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS associations (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                relation_type TEXT NOT NULL,
-                weight REAL NOT NULL DEFAULT 0.5,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (source_id) REFERENCES memories(id) ON DELETE CASCADE,
-                FOREIGN KEY (target_id) REFERENCES memories(id) ON DELETE CASCADE,
-                UNIQUE(source_id, target_id, relation_type)
-            )
-            "#
-        )
-        .execute(&self.pool)
-        .await
-        .with_context(|| "failed to create associations table")?;
-        
-        // Create indices for performance
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type)")
-            .execute(&self.pool)
-            .await?;
-        
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance)")
-            .execute(&self.pool)
-            .await?;
-        
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_associations_source ON associations(source_id)")
-            .execute(&self.pool)
-            .await?;
-        
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_associations_target ON associations(target_id)")
-            .execute(&self.pool)
-            .await?;
-        
-        Ok(())
-    }
-    
     /// Save a new memory to the store.
     pub async fn save(&self, memory: &Memory) -> Result<()> {
         sqlx::query(
@@ -281,37 +218,6 @@ impl MemoryStore {
         Ok(rows.into_iter().map(|row| row_to_memory(&row)).collect())
     }
     
-    /// Search memories by content (full-text search using LIKE for now).
-    pub async fn search_content(&self, query: &str, limit: i64) -> Result<Vec<(Memory, f32)>> {
-        // Use LIKE for now - FTS5 can be added later
-        let pattern = format!("%{}%", query);
-        
-        let rows = sqlx::query(
-            r#"
-            SELECT id, content, memory_type, importance, created_at, updated_at,
-                   last_accessed_at, access_count, source, channel_id
-            FROM memories
-            WHERE content LIKE ?
-            ORDER BY importance DESC
-            LIMIT ?
-            "#
-        )
-        .bind(&pattern)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .with_context(|| format!("failed to search memories for '{}'", query))?;
-        
-        let results = rows
-            .into_iter()
-            .map(|row| {
-                let importance: f32 = row.try_get("importance").unwrap_or(0.5);
-                (row_to_memory(&row), importance)
-            })
-            .collect();
-        
-        Ok(results)
-    }
 }
 
 /// Helper: Convert a database row to a Memory.

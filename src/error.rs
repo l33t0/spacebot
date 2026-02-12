@@ -64,6 +64,9 @@ pub enum DbError {
     #[error("failed to connect to LanceDB: {0}")]
     LanceConnect(String),
 
+    #[error("LanceDB operation failed: {0}")]
+    LanceDb(String),
+
     #[error("failed to connect to redb: {0}")]
     RedbConnect(#[from] redb::Error),
 

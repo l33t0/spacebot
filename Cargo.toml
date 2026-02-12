@@ -23,7 +23,8 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # Databases
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate", "chrono", "uuid"] }
-lancedb = "0.18"
+lancedb = "0.26"
+lance-index = "2.0"
 redb = "2.4"
 
 # Vector / embedding operations
@@ -64,6 +65,8 @@ clap = { version = "4.5", features = ["derive"] }
 
 # Indoc for test fixtures
 indoc = "2"
+arrow-array = "57.3.0"
+arrow-schema = "57.3.0"
 
 [lints.clippy]
 dbg_macro = "forbid"

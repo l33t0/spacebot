@@ -38,55 +38,6 @@ impl HistoryStore {
         Self { pool }
     }
     
-    /// Initialize the history tables.
-    pub async fn initialize(&self) -> Result<()> {
-        // Conversation turns table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS conversation_turns (
-                id TEXT PRIMARY KEY,
-                channel_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL,
-                inbound_message TEXT NOT NULL,
-                outbound_response TEXT,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(channel_id, sequence)
-            )
-            "#
-        )
-        .execute(&self.pool)
-        .await
-        .context("failed to create conversation_turns table")?;
-        
-        // Compaction summaries table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS compaction_summaries (
-                id TEXT PRIMARY KEY,
-                channel_id TEXT NOT NULL,
-                start_sequence INTEGER NOT NULL,
-                end_sequence INTEGER NOT NULL,
-                summary_text TEXT NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            "#
-        )
-        .execute(&self.pool)
-        .await
-        .context("failed to create compaction_summaries table")?;
-        
-        // Create indices
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_turns_channel ON conversation_turns(channel_id)")
-            .execute(&self.pool)
-            .await?;
-        
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_turns_sequence ON conversation_turns(channel_id, sequence)")
-            .execute(&self.pool)
-            .await?;
-        
-        Ok(())
-    }
-    
     /// Save a conversation turn.
     pub async fn save_turn(
         &self,

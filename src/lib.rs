@@ -117,7 +117,7 @@ pub enum ProcessEvent {
 /// Shared dependency bundle for agents.
 #[derive(Clone)]
 pub struct AgentDeps {
-    pub memory_store: Arc<memory::MemoryStore>,
+    pub memory_search: Arc<memory::MemorySearch>,
     pub llm_manager: Arc<llm::LlmManager>,
     pub tool_server: tools::ToolServerHandle,
     pub event_tx: tokio::sync::mpsc::Sender<ProcessEvent>,
