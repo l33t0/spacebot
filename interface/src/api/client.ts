@@ -201,6 +201,24 @@ export interface AgentsResponse {
 	agents: AgentInfo[];
 }
 
+export interface CronJobInfo {
+	id: string;
+	prompt: string;
+	interval_secs: number;
+	delivery_target: string;
+	enabled: boolean;
+	active_hours: [number, number] | null;
+}
+
+export interface AgentOverviewResponse {
+	memory_counts: Record<string, number>;
+	memory_total: number;
+	channel_count: number;
+	cron_jobs: CronJobInfo[];
+	last_bulletin_at: string | null;
+	recent_cortex_events: CortexEvent[];
+}
+
 export type MemoryType =
 	| "fact"
 	| "preference"
@@ -466,6 +484,8 @@ export interface AgentConfigUpdateRequest {
 export const api = {
 	status: () => fetchJson<StatusResponse>("/status"),
 	agents: () => fetchJson<AgentsResponse>("/agents"),
+	agentOverview: (agentId: string) =>
+		fetchJson<AgentOverviewResponse>(`/agents/overview?agent_id=${encodeURIComponent(agentId)}`),
 	channels: () => fetchJson<ChannelsResponse>("/channels"),
 	channelMessages: (channelId: string, limit = 20) =>
 		fetchJson<MessagesResponse>(

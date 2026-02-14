@@ -16,6 +16,7 @@ use axum::Router;
 use futures::stream::Stream;
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
+use sqlx::Row as _;
 use tower_http::cors::{Any, CorsLayer};
 
 use std::collections::HashMap;
@@ -67,6 +68,32 @@ struct MessagesResponse {
 #[derive(Serialize)]
 struct AgentsResponse {
     agents: Vec<AgentInfo>,
+}
+
+#[derive(Serialize)]
+struct AgentOverviewResponse {
+    /// Memory count by type.
+    memory_counts: HashMap<String, i64>,
+    /// Total memory count.
+    memory_total: i64,
+    /// Active channel count for this agent.
+    channel_count: usize,
+    /// Cron jobs (all, not just enabled).
+    cron_jobs: Vec<CronJobInfo>,
+    /// Last cortex bulletin event time, if any.
+    last_bulletin_at: Option<String>,
+    /// Recent cortex events (last 5).
+    recent_cortex_events: Vec<CortexEvent>,
+}
+
+#[derive(Serialize)]
+struct CronJobInfo {
+    id: String,
+    prompt: String,
+    interval_secs: u64,
+    delivery_target: String,
+    enabled: bool,
+    active_hours: Option<(u8, u8)>,
 }
 
 #[derive(Serialize)]
@@ -294,6 +321,7 @@ pub async fn start_http_server(
         .route("/status", get(status))
         .route("/events", get(events_sse))
         .route("/agents", get(list_agents))
+        .route("/agents/overview", get(agent_overview))
         .route("/channels", get(list_channels))
         .route("/channels/messages", get(channel_messages))
         .route("/channels/status", get(channel_status))
@@ -348,6 +376,95 @@ async fn status(State(state): State<Arc<ApiState>>) -> Json<StatusResponse> {
 async fn list_agents(State(state): State<Arc<ApiState>>) -> Json<AgentsResponse> {
     let agents = state.agent_configs.load();
     Json(AgentsResponse { agents: agents.as_ref().clone() })
+}
+
+/// Get overview stats for an agent: memory breakdown, channels, cron, cortex.
+async fn agent_overview(
+    State(state): State<Arc<ApiState>>,
+    Query(query): Query<AgentOverviewQuery>,
+) -> Result<Json<AgentOverviewResponse>, StatusCode> {
+    let pools = state.agent_pools.load();
+    let pool = pools.get(&query.agent_id).ok_or(StatusCode::NOT_FOUND)?;
+
+    // Memory counts by type
+    let memory_rows = sqlx::query(
+        "SELECT memory_type, COUNT(*) as count FROM memories WHERE forgotten = 0 GROUP BY memory_type",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        tracing::warn!(%error, agent_id = %query.agent_id, "failed to count memories");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let mut memory_counts: HashMap<String, i64> = HashMap::new();
+    let mut memory_total: i64 = 0;
+    for row in &memory_rows {
+        let memory_type: String = row.get("memory_type");
+        let count: i64 = row.get("count");
+        memory_total += count;
+        memory_counts.insert(memory_type, count);
+    }
+
+    // Channel count
+    let channel_store = ChannelStore::new(pool.clone());
+    let channels = channel_store.list_active().await.unwrap_or_default();
+    let channel_count = channels.len();
+
+    // Cron jobs
+    let cron_rows = sqlx::query(
+        "SELECT id, prompt, interval_secs, delivery_target, active_start_hour, active_end_hour, enabled FROM cron_jobs ORDER BY created_at ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let cron_jobs: Vec<CronJobInfo> = cron_rows
+        .into_iter()
+        .map(|row| {
+            let active_start: Option<i64> = row.try_get("active_start_hour").ok();
+            let active_end: Option<i64> = row.try_get("active_end_hour").ok();
+            CronJobInfo {
+                id: row.get("id"),
+                prompt: row.get("prompt"),
+                interval_secs: row.get::<i64, _>("interval_secs") as u64,
+                delivery_target: row.get("delivery_target"),
+                enabled: row.get::<i64, _>("enabled") != 0,
+                active_hours: match (active_start, active_end) {
+                    (Some(s), Some(e)) => Some((s as u8, e as u8)),
+                    _ => None,
+                },
+            }
+        })
+        .collect();
+
+    // Last bulletin time
+    let cortex_logger = CortexLogger::new(pool.clone());
+    let bulletin_events = cortex_logger
+        .load_events(1, 0, Some("bulletin_generated"))
+        .await
+        .unwrap_or_default();
+    let last_bulletin_at = bulletin_events.first().map(|e| e.created_at.clone());
+
+    // Recent cortex events
+    let recent_cortex_events = cortex_logger
+        .load_events(5, 0, None)
+        .await
+        .unwrap_or_default();
+
+    Ok(Json(AgentOverviewResponse {
+        memory_counts,
+        memory_total,
+        channel_count,
+        cron_jobs,
+        last_bulletin_at,
+        recent_cortex_events,
+    }))
+}
+
+#[derive(Deserialize)]
+struct AgentOverviewQuery {
+    agent_id: String,
 }
 
 /// SSE endpoint streaming all agent events to connected clients.
