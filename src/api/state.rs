@@ -2,7 +2,7 @@
 
 use crate::agent::cortex_chat::CortexChatSession;
 use crate::agent::status::StatusBlock;
-use crate::config::DiscordPermissions;
+use crate::config::{DiscordPermissions, RuntimeConfig};
 use crate::cron::{CronStore, Scheduler};
 use crate::memory::MemorySearch;
 use crate::{ProcessEvent, ProcessId};
@@ -49,6 +49,8 @@ pub struct ApiState {
     pub cron_stores: arc_swap::ArcSwap<HashMap<String, Arc<CronStore>>>,
     /// Per-agent cron schedulers for job timer management.
     pub cron_schedulers: arc_swap::ArcSwap<HashMap<String, Arc<Scheduler>>>,
+    /// Per-agent RuntimeConfig for reading live hot-reloaded configuration.
+    pub runtime_configs: ArcSwap<HashMap<String, Arc<RuntimeConfig>>>,
     /// Shared reference to the Discord permissions ArcSwap (same instance used by the adapter and file watcher).
     pub discord_permissions: RwLock<Option<Arc<ArcSwap<DiscordPermissions>>>>,
 }
@@ -144,6 +146,7 @@ impl ApiState {
             config_path: RwLock::new(PathBuf::new()),
             cron_stores: arc_swap::ArcSwap::from_pointee(HashMap::new()),
             cron_schedulers: arc_swap::ArcSwap::from_pointee(HashMap::new()),
+            runtime_configs: ArcSwap::from_pointee(HashMap::new()),
             discord_permissions: RwLock::new(None),
         }
     }
@@ -293,6 +296,11 @@ impl ApiState {
     /// Set the cron schedulers for all agents.
     pub fn set_cron_schedulers(&self, schedulers: HashMap<String, Arc<Scheduler>>) {
         self.cron_schedulers.store(Arc::new(schedulers));
+    }
+
+    /// Set the runtime configs for all agents.
+    pub fn set_runtime_configs(&self, configs: HashMap<String, Arc<RuntimeConfig>>) {
+        self.runtime_configs.store(Arc::new(configs));
     }
 
     /// Share the Discord permissions ArcSwap with the API so reads get hot-reloaded values.
