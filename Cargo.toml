@@ -23,7 +23,13 @@ rig = { version = "0.30.0", package = "rig-core", features = ["derive"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # Databases
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate", "chrono", "uuid"] }
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "sqlite",
+    "migrate",
+    "chrono",
+    "uuid",
+] }
 lancedb = "0.26"
 lance-index = "2.0"
 redb = "2.4"
@@ -40,13 +46,19 @@ flate2 = "1"
 
 # Logging and tracing
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 
 # OpenTelemetry
 opentelemetry = "0.29"
-opentelemetry_sdk = { version = "0.29", features = ["rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime"] }
-opentelemetry-otlp = { version = "0.29", default-features = false, features = ["http-proto", "reqwest-client"] }
+opentelemetry_sdk = { version = "0.29", features = [
+    "rt-tokio",
+    "experimental_trace_batch_span_processor_with_async_runtime",
+] }
+opentelemetry-otlp = { version = "0.29", default-features = false, features = [
+    "http-proto",
+    "reqwest-client",
+] }
 opentelemetry-semantic-conventions = "0.29"
 tracing-opentelemetry = "0.30"
 
@@ -79,7 +91,13 @@ pin-project = "1"
 
 # Schema validation
 schemars = "0.8"
-rmcp = { version = "0.16", features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "0.16", features = [
+    "client",
+    "reqwest",
+    "transport-child-process",
+    "transport-streamable-http-client",
+    "transport-streamable-http-client-reqwest",
+] }
 
 # Command line (for main.rs)
 clap = { version = "4.5", features = ["derive"] }
@@ -91,7 +109,14 @@ libc = "0.2"
 ignore = "0.4"
 
 # Discord
-serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "cache", "chrono", "rustls_backend"] }
+serenity = { version = "0.12", default-features = false, features = [
+    "client",
+    "gateway",
+    "model",
+    "cache",
+    "chrono",
+    "rustls_backend",
+] }
 async-trait = "0.1"
 
 # Slack
@@ -106,7 +131,10 @@ tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 teloxide = { version = "0.17", default-features = false, features = ["rustls"] }
 
 # Twitch
-twitch-irc = { version = "5.0", default-features = false, features = ["transport-tcp-rustls-webpki-roots", "refreshing-token-rustls-webpki-roots"] }
+twitch-irc = { version = "5.0", default-features = false, features = [
+    "transport-tcp-rustls-webpki-roots",
+    "refreshing-token-rustls-webpki-roots",
+] }
 
 # Stream utilities
 tokio-stream = "0.1"
@@ -124,7 +152,9 @@ arrow-array = "57.3.0"
 arrow-schema = "57.3.0"
 
 # Browser automation
-chromiumoxide = { version = "0.8", features = ["tokio-runtime"], default-features = false }
+chromiumoxide = { version = "0.8", features = [
+    "tokio-runtime",
+], default-features = false }
 chromiumoxide_cdp = "0.8"
 
 # Templating for prompts

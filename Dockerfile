@@ -1,6 +1,8 @@
 # ---- Builder stage ----
 # Compiles the React frontend and the Rust binary with the frontend embedded.
+# Build arg: METRICS=1 enables Prometheus metrics (--features metrics)
 FROM rust:bookworm AS builder
+ARG METRICS=0
 
 # Install build dependencies:
 #   protobuf-compiler — LanceDB protobuf codegen
@@ -39,7 +41,11 @@ COPY build.rs ./
 COPY prompts/ prompts/
 COPY migrations/ migrations/
 COPY src/ src/
-RUN SPACEBOT_SKIP_FRONTEND_BUILD=1 cargo build --release \
+RUN if [ "$METRICS" = "1" ]; then \
+      SPACEBOT_SKIP_FRONTEND_BUILD=1 cargo build --release --features metrics; \
+    else \
+      SPACEBOT_SKIP_FRONTEND_BUILD=1 cargo build --release; \
+    fi \
     && mv /build/target/release/spacebot /usr/local/bin/spacebot \
     && cargo clean -p spacebot --release --target-dir /build/target
 
@@ -61,7 +67,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV SPACEBOT_DIR=/data
 ENV SPACEBOT_DEPLOYMENT=docker
-EXPOSE 19898 18789
+EXPOSE 19898 18789 9090
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:19898/api/health || exit 1

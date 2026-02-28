@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
+use tracing_subscriber::Layer as _;
 use tracing_subscriber::fmt::format;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
@@ -132,42 +133,52 @@ pub fn daemonize(paths: &DaemonPaths) -> anyhow::Result<()> {
 pub fn init_background_tracing(
     paths: &DaemonPaths,
     debug: bool,
+    log_json: bool,
     telemetry: &TelemetryConfig,
 ) -> Option<SdkTracerProvider> {
     let file_appender = tracing_appender::rolling::daily(&paths.log_dir, "spacebot.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    let field_formatter = format::debug_fn(|writer, field, value| {
-        let field_name = field.name();
-
-        if field_name == "gen_ai.system_instructions"
-            || field_name == "gen_ai.tool.call.arguments"
-            || field_name == "gen_ai.tool.call.result"
-        {
-            Ok(())
-        } else if field_name == "message" {
-            let formatted = format!("{value:?}");
-            const MAX_MESSAGE_CHARS: usize = 280;
-            let (truncated, was_truncated) = truncate_for_log(&formatted, MAX_MESSAGE_CHARS);
-            if was_truncated {
-                write!(writer, "{}={}...", field_name, truncated)
-            } else {
-                write!(writer, "{}={formatted}", field_name)
-            }
-        } else {
-            write!(writer, "{}={value:?}", field_name)
-        }
-    });
 
     // Leak the guard so the non-blocking writer lives for the entire process.
     // The process owns this — it's cleaned up on exit.
     std::mem::forget(_guard);
 
     let filter = build_env_filter(debug);
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_writer(non_blocking)
-        .with_ansi(false)
-        .fmt_fields(field_formatter)
-        .compact();
+    let fmt_layer = if log_json {
+        tracing_subscriber::fmt::layer()
+            .with_writer(non_blocking)
+            .with_ansi(false)
+            .json()
+            .boxed()
+    } else {
+        let field_formatter = format::debug_fn(|writer, field, value| {
+            let field_name = field.name();
+
+            if field_name == "gen_ai.system_instructions"
+                || field_name == "gen_ai.tool.call.arguments"
+                || field_name == "gen_ai.tool.call.result"
+            {
+                Ok(())
+            } else if field_name == "message" {
+                let formatted = format!("{value:?}");
+                const MAX_MESSAGE_CHARS: usize = 280;
+                let (truncated, was_truncated) = truncate_for_log(&formatted, MAX_MESSAGE_CHARS);
+                if was_truncated {
+                    write!(writer, "{}={}...", field_name, truncated)
+                } else {
+                    write!(writer, "{}={formatted}", field_name)
+                }
+            } else {
+                write!(writer, "{}={value:?}", field_name)
+            }
+        });
+        tracing_subscriber::fmt::layer()
+            .with_writer(non_blocking)
+            .with_ansi(false)
+            .fmt_fields(field_formatter)
+            .compact()
+            .boxed()
+    };
 
     match build_otlp_provider(telemetry) {
         Some(provider) => {
@@ -194,35 +205,41 @@ pub fn init_background_tracing(
 /// Returns an `SdkTracerProvider` if OTLP export is configured.
 pub fn init_foreground_tracing(
     debug: bool,
+    log_json: bool,
     telemetry: &TelemetryConfig,
 ) -> Option<SdkTracerProvider> {
-    let field_formatter = format::debug_fn(|writer, field, value| {
-        let field_name = field.name();
-
-        if field_name == "gen_ai.system_instructions"
-            || field_name == "gen_ai.tool.call.arguments"
-            || field_name == "gen_ai.tool.call.result"
-        {
-            Ok(())
-        } else if field_name == "message" {
-            let formatted = format!("{value:?}");
-            const MAX_MESSAGE_CHARS: usize = 280;
-            let (truncated, was_truncated) = truncate_for_log(&formatted, MAX_MESSAGE_CHARS);
-            if was_truncated {
-                write!(writer, "{}={}", field_name, truncated)?;
-                write!(writer, "...")?;
-            } else {
-                write!(writer, "{}={formatted}", field_name)?;
-            }
-            Ok(())
-        } else {
-            write!(writer, "{}={value:?}", field_name)
-        }
-    });
     let filter = build_env_filter(debug);
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .fmt_fields(field_formatter)
-        .compact();
+    let fmt_layer = if log_json {
+        tracing_subscriber::fmt::layer().json().boxed()
+    } else {
+        let field_formatter = format::debug_fn(|writer, field, value| {
+            let field_name = field.name();
+
+            if field_name == "gen_ai.system_instructions"
+                || field_name == "gen_ai.tool.call.arguments"
+                || field_name == "gen_ai.tool.call.result"
+            {
+                Ok(())
+            } else if field_name == "message" {
+                let formatted = format!("{value:?}");
+                const MAX_MESSAGE_CHARS: usize = 280;
+                let (truncated, was_truncated) = truncate_for_log(&formatted, MAX_MESSAGE_CHARS);
+                if was_truncated {
+                    write!(writer, "{}={}", field_name, truncated)?;
+                    write!(writer, "...")?;
+                } else {
+                    write!(writer, "{}={formatted}", field_name)?;
+                }
+                Ok(())
+            } else {
+                write!(writer, "{}={value:?}", field_name)
+            }
+        });
+        tracing_subscriber::fmt::layer()
+            .fmt_fields(field_formatter)
+            .compact()
+            .boxed()
+    };
 
     match build_otlp_provider(telemetry) {
         Some(provider) => {

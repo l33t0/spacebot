@@ -23,6 +23,10 @@ struct Cli {
     /// Enable debug logging
     #[arg(short, long, global = true)]
     debug: bool,
+
+    /// Output logs as newline-delimited JSON
+    #[arg(long, global = true)]
+    log_json: bool,
 }
 
 #[derive(Subcommand)]
@@ -135,11 +139,11 @@ fn main() -> anyhow::Result<()> {
     let command = cli.command.unwrap_or(Command::Start { foreground: false });
 
     match command {
-        Command::Start { foreground } => cmd_start(cli.config, cli.debug, foreground),
+        Command::Start { foreground } => cmd_start(cli.config, cli.debug, cli.log_json, foreground),
         Command::Stop => cmd_stop(),
         Command::Restart { foreground } => {
             cmd_stop_if_running();
-            cmd_start(cli.config, cli.debug, foreground)
+            cmd_start(cli.config, cli.debug, cli.log_json, foreground)
         }
         Command::Status => cmd_status(),
         Command::Skill(skill_cmd) => cmd_skill(cli.config, skill_cmd),
@@ -150,6 +154,7 @@ fn main() -> anyhow::Result<()> {
 fn cmd_start(
     config_path: Option<std::path::PathBuf>,
     debug: bool,
+    log_json: bool,
     foreground: bool,
 ) -> anyhow::Result<()> {
     let paths = spacebot::daemon::DaemonPaths::from_default();
@@ -196,10 +201,10 @@ fn cmd_start(
 
     runtime.block_on(async {
         let otel_provider = if foreground {
-            spacebot::daemon::init_foreground_tracing(debug, &config.telemetry)
+            spacebot::daemon::init_foreground_tracing(debug, log_json, &config.telemetry)
         } else {
             let paths = spacebot::daemon::DaemonPaths::new(&config.instance_dir);
-            spacebot::daemon::init_background_tracing(&paths, debug, &config.telemetry)
+            spacebot::daemon::init_background_tracing(&paths, debug, log_json, &config.telemetry)
         };
 
         run(config, foreground, otel_provider).await
