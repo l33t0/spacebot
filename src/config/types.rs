@@ -1690,7 +1690,9 @@ pub(super) fn validate_named_messaging_adapters(
         if !is_named_adapter_platform(binding.channel.as_str()) {
             if binding.adapter.is_some() {
                 tracing::warn!(
+                    agent_id = %binding.agent_id,
                     channel = %binding.channel,
+                    adapter = %binding.adapter.as_deref().unwrap_or("<default>"),
                     "skipping binding: this platform does not support named adapters"
                 );
                 continue;
@@ -1703,6 +1705,7 @@ pub(super) fn validate_named_messaging_adapters(
             Some(s) => s,
             None => {
                 tracing::warn!(
+                    agent_id = %binding.agent_id,
                     channel = %binding.channel,
                     "skipping binding: no messaging config exists for this platform"
                 );
@@ -1715,6 +1718,7 @@ pub(super) fn validate_named_messaging_adapters(
             Some(adapter_name) => {
                 if !state.named_instances.contains(adapter_name) {
                     tracing::warn!(
+                        agent_id = %binding.agent_id,
                         channel = %binding.channel,
                         adapter = %adapter_name,
                         "skipping binding: references missing adapter"
@@ -1725,6 +1729,7 @@ pub(super) fn validate_named_messaging_adapters(
             None => {
                 if !state.default_present {
                     tracing::warn!(
+                        agent_id = %binding.agent_id,
                         channel = %binding.channel,
                         "skipping binding: requires the default adapter, but no default credentials are configured"
                     );

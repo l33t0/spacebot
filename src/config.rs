@@ -1602,7 +1602,8 @@ maintenance_merge_similarity_threshold = 1.1
                 dm_allowed_users: vec![],
             },
         ];
-        let result = validate_named_messaging_adapters(&messaging, bindings).unwrap();
+        let result = validate_named_messaging_adapters(&messaging, bindings)
+            .expect("bindings should be resolvable");
         assert_eq!(result.len(), 2);
     }
 
@@ -1633,7 +1634,8 @@ maintenance_merge_similarity_threshold = 1.1
             require_mention: false,
             dm_allowed_users: vec![],
         }];
-        let result = validate_named_messaging_adapters(&messaging, bindings).unwrap();
+        let result = validate_named_messaging_adapters(&messaging, bindings)
+            .expect("bindings should be resolvable");
         assert!(result.is_empty(), "unresolvable binding should be skipped");
     }
 
@@ -1697,7 +1699,8 @@ maintenance_merge_similarity_threshold = 1.1
             require_mention: false,
             dm_allowed_users: vec![],
         }];
-        let result = validate_named_messaging_adapters(&messaging, bindings).unwrap();
+        let result = validate_named_messaging_adapters(&messaging, bindings)
+            .expect("bindings should be resolvable");
         assert!(
             result.is_empty(),
             "unsupported platform binding should be skipped"
@@ -1737,7 +1740,8 @@ maintenance_merge_similarity_threshold = 1.1
             require_mention: false,
             dm_allowed_users: vec![],
         }];
-        let result = validate_named_messaging_adapters(&messaging, bindings).unwrap();
+        let result = validate_named_messaging_adapters(&messaging, bindings)
+            .expect("bindings should be resolvable");
         assert!(
             result.is_empty(),
             "binding without default adapter should be skipped"
@@ -1815,7 +1819,8 @@ maintenance_merge_similarity_threshold = 1.1
                 dm_allowed_users: vec![],
             },
         ];
-        let result = validate_named_messaging_adapters(&messaging, bindings).unwrap();
+        let result = validate_named_messaging_adapters(&messaging, bindings)
+            .expect("bindings should be resolvable");
         assert_eq!(
             result.len(),
             2,
@@ -1847,7 +1852,8 @@ maintenance_merge_similarity_threshold = 1.1
             require_mention: false,
             dm_allowed_users: vec![],
         }];
-        let result = validate_named_messaging_adapters(&messaging, bindings).unwrap();
+        let result = validate_named_messaging_adapters(&messaging, bindings)
+            .expect("bindings should be resolvable");
         assert!(
             result.is_empty(),
             "binding with no messaging config should be skipped"
